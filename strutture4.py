@@ -322,8 +322,6 @@ class ExcelViewer(QWidget):
             QMessageBox.critical(self, "Errore", f"Download fallito: {str(e)}")
             return False
 
-# ... (tutto il codice precedente rimane invariato fino alla funzione setup_ui)
-
     def setup_ui(self):
         self.setWindowTitle("📊 Strutture Sci - Analisi Dati")
         self.setGeometry(100, 100, 1400, 800)
@@ -426,205 +424,259 @@ class ExcelViewer(QWidget):
         self.scelte_filter.setCurrentIndex(0)
         self.load_data()
 
-def load_data(self):
-    if not os.path.exists(self.excel_path):
-        QMessageBox.critical(self, "Errore", "Il file Excel non esiste!")
-        return
+    def parse_temperature(self, temp_str):
+        """Funzione helper per parsare le temperature in modo più robusto"""
+        if not temp_str or str(temp_str).strip() == "":
+            return None
         
-    try:
-        df = pd.read_excel(self.excel_path, sheet_name="Foglio1", engine='openpyxl')
-        df = df.fillna("")
+        temp_str = str(temp_str).strip().replace(',', '.')
+        # Rimuovi caratteri non numerici eccetto punto e segno meno
+        import re
+        temp_str = re.sub(r'[^\d\.-]', '', temp_str)
         
-        # Processa i dati
-        groups = []
-        current_group = []
+        try:
+            return float(temp_str)
+        except ValueError:
+            return None
+
+    def parse_humidity(self, hum_str):
+        """Funzione helper per parsare l'umidità in modo più robusto"""
+        if not hum_str or str(hum_str).strip() == "":
+            return None
         
-        for _, row in df.iterrows():
-            if all(str(value).strip() == "" for value in row.values):
-                if current_group:
-                    groups.append(pd.DataFrame(current_group))
-                    current_group = []
+        hum_str = str(hum_str).strip().replace(',', '.').replace('%', '')
+        # Rimuovi caratteri non numerici eccetto punto
+        import re
+        hum_str = re.sub(r'[^\d\.]', '', hum_str)
+        
+        try:
+            return float(hum_str)
+        except ValueError:
+            return None
+
+    def get_scelta_type(self, considerazioni_text):
+        """Determina il tipo di scelta dalle considerazioni"""
+        if not considerazioni_text:
+            return None
+        
+        considerazioni = str(considerazioni_text).upper().strip()
+        
+        # Pattern più specifici per le scelte
+        if any(pattern in considerazioni for pattern in [
+            "PRIMA SCELTA", "1° SCELTA", "1A SCELTA", "PRIMO", "MIGLIORE", 
+            "OTTIMA", "PERFETTA", "IDEALE", "BEST"
+        ]):
+            return "prima"
+        elif any(pattern in considerazioni for pattern in [
+            "SECONDA SCELTA", "2° SCELTA", "2A SCELTA", "SECONDO", 
+            "ALTERNATIVA", "BUONA"
+        ]):
+            return "seconda"
+        elif any(pattern in considerazioni for pattern in [
+            "TERZA SCELTA", "3° SCELTA", "3A SCELTA", "TERZO", 
+            "ULTIMA", "PEGGIORE", "SCONSIGLIATA"
+        ]):
+            return "terza"
+        
+        return None
+
+    def load_data(self):
+        if not os.path.exists(self.excel_path):
+            QMessageBox.critical(self, "Errore", "Il file Excel non esiste!")
+            return
+            
+        try:
+            df = pd.read_excel(self.excel_path, sheet_name="Foglio1", engine='openpyxl')
+            df = df.fillna("")
+            
+            # Processa i dati in gruppi
+            groups = []
+            current_group = []
+            
+            for idx, row in df.iterrows():
+                if all(str(value).strip() == "" for value in row.values):
+                    if current_group:
+                        groups.append(pd.DataFrame(current_group))
+                        current_group = []
+                else:
+                    current_group.append(row)
+            
+            if current_group:
+                groups.append(pd.DataFrame(current_group))
+            
+            # Applica i filtri
+            filtered_groups = []
+            
+            for group in groups:
+                include_group = True
+                
+                # Filtro luogo
+                if self.luogo_filter.text().strip():
+                    luogo_text = self.luogo_filter.text().strip().lower()
+                    luogo_found = False
+                    for _, row in group.iterrows():
+                        if luogo_text in str(row.get("LUOGO", "")).lower():
+                            luogo_found = True
+                            break
+                    if not luogo_found:
+                        include_group = False
+                
+                # Filtro tipo evento
+                if include_group and self.tipo_evento.currentText() != "Tutti":
+                    tipo_text = self.tipo_evento.currentText().upper()
+                    tipo_found = False
+                    for _, row in group.iterrows():
+                        if tipo_text in str(row.get("TEST o GARA", "")).strip().upper():
+                            tipo_found = True
+                            break
+                    if not tipo_found:
+                        include_group = False
+                
+                # Filtro meteo
+                if include_group and self.meteo_filter.text().strip():
+                    meteo_text = self.meteo_filter.text().strip().lower()
+                    meteo_found = False
+                    for _, row in group.iterrows():
+                        if meteo_text in str(row.get("CONDIZIONI METEO E VENTO", "")).lower():
+                            meteo_found = True
+                            break
+                    if not meteo_found:
+                        include_group = False
+                
+                # Filtro temperatura aria (CORRETTA)
+                if include_group and self.temp_aria.text().strip():
+                    try:
+                        target_temp = float(self.temp_aria.text().strip().replace(',', '.'))
+                        temp_found = False
+                        
+                        for _, row in group.iterrows():
+                            for col in ["TEMP. ARIA INIZIO", "TEMP. ARIA FINE"]:
+                                cell_temp = self.parse_temperature(row.get(col, ""))
+                                if cell_temp is not None and abs(cell_temp - target_temp) < 0.5:
+                                    temp_found = True
+                                    break
+                            if temp_found:
+                                break
+                        
+                        if not temp_found:
+                            include_group = False
+                    except ValueError:
+                        include_group = False
+                
+                # Filtro temperatura neve (CORRETTA)
+                if include_group and self.temp_neve.text().strip():
+                    try:
+                        target_temp = float(self.temp_neve.text().strip().replace(',', '.'))
+                        temp_found = False
+                        
+                        for _, row in group.iterrows():
+                            for col in ["TEMP. NEVE INIZIO", "TEMP. NEVE FINE"]:
+                                cell_temp = self.parse_temperature(row.get(col, ""))
+                                if cell_temp is not None and abs(cell_temp - target_temp) < 0.5:
+                                    temp_found = True
+                                    break
+                            if temp_found:
+                                break
+                        
+                        if not temp_found:
+                            include_group = False
+                    except ValueError:
+                        include_group = False
+                
+                # Filtro tipo neve
+                if include_group and self.tipo_neve.text().strip():
+                    tipon_text = self.tipo_neve.text().strip().lower()
+                    tipon_found = False
+                    for _, row in group.iterrows():
+                        if tipon_text in str(row.get("TIPO NEVE", "")).lower():
+                            tipon_found = True
+                            break
+                    if not tipon_found:
+                        include_group = False
+                
+                # Filtro umidità (CORRETTA)
+                if include_group and self.umidita.text().strip():
+                    try:
+                        target_hum = float(self.umidita.text().strip().replace(',', '.'))
+                        hum_found = False
+                        
+                        for _, row in group.iterrows():
+                            for col in ["UMIDITA % INIZIO", "UMIDITA' % FINE"]:
+                                cell_hum = self.parse_humidity(row.get(col, ""))
+                                if cell_hum is not None and abs(cell_hum - target_hum) < 2:  # Tolleranza del 2%
+                                    hum_found = True
+                                    break
+                            if hum_found:
+                                break
+                        
+                        if not hum_found:
+                            include_group = False
+                    except ValueError:
+                        include_group = False
+                
+                # Filtro scelte (CORRETTO)
+                if include_group and self.scelte_filter.currentText() != "Tutte":
+                    scelta_richiesta = self.scelte_filter.currentText().lower().replace(" scelta", "")
+                    scelta_found = False
+                    
+                    for _, row in group.iterrows():
+                        considerazioni = row.get("CONSIDERAZIONE POST GARA o TEST", "")
+                        scelta_tipo = self.get_scelta_type(considerazioni)
+                        if scelta_tipo == scelta_richiesta:
+                            scelta_found = True
+                            break
+                    
+                    if not scelta_found:
+                        include_group = False
+                
+                if include_group:
+                    filtered_groups.append(group)
+            
+            # Combina tutti i gruppi filtrati
+            if filtered_groups:
+                filtered_df = pd.concat(filtered_groups, ignore_index=True)
             else:
-                current_group.append(row)
-        
-        if current_group:
-            groups.append(pd.DataFrame(current_group))
-        
-        # Applica i filtri
-        filtered_groups = []
-        
-        for group in groups:
-            include_group = True
+                filtered_df = pd.DataFrame(columns=df.columns)
             
-            # Filtro luogo
-            if self.luogo_filter.text():
-                luogo_text = self.luogo_filter.text().strip().lower()
-                if not any(luogo_text in str(row.get("LUOGO", "")).lower() for _, row in group.iterrows()):
-                    include_group = False
+            # Popola la tabella
+            self.table.setRowCount(len(filtered_df))
+            self.table.setColumnCount(len(filtered_df.columns))
+            self.table.setHorizontalHeaderLabels(filtered_df.columns)
             
-            # Filtro tipo evento
-            if include_group and self.tipo_evento.currentText() != "Tutti":
-                tipo_text = self.tipo_evento.currentText().upper()
-                if not any(tipo_text in str(row.get("TEST o GARA", "")).strip().upper() for _, row in group.iterrows()):
-                    include_group = False
+            for row in range(len(filtered_df)):
+                for col in range(len(filtered_df.columns)):
+                    val = filtered_df.iloc[row, col]
+                    item = QTableWidgetItem(str(val))
+                    
+                    # Evidenziazione corretta basata sulle scelte
+                    if col < len(filtered_df.columns):
+                        considerazioni = filtered_df.iloc[row].get("CONSIDERAZIONE POST GARA o TEST", "")
+                        scelta_tipo = self.get_scelta_type(considerazioni)
+                        
+                        if scelta_tipo == "prima":
+                            item.setBackground(QColor(144, 238, 144))  # Verde chiaro
+                        elif scelta_tipo == "seconda":
+                            item.setBackground(QColor(255, 255, 150))  # Giallo chiaro
+                        elif scelta_tipo == "terza":
+                            item.setBackground(QColor(255, 182, 193))  # Rosa chiaro
+                    
+                    self.table.setItem(row, col, item)
             
-            # Filtro meteo
-            if include_group and self.meteo_filter.text():
-                meteo_text = self.meteo_filter.text().strip().lower()
-                if not any(meteo_text in str(row.get("CONDIZIONI METEO E VENTO", "")).lower() for _, row in group.iterrows()):
-                    include_group = False
+            self.table.resizeColumnsToContents()
             
-            # Filtro temperatura aria (gestisce valori negativi e decimali)
-            if include_group and self.temp_aria.text():
-                temp_text = self.temp_aria.text().strip().replace(',', '.')
-                try:
-                    temp_value = float(temp_text)
-                    temp_found = False
-                    for _, row in group.iterrows():
-                        for col in ["TEMP. ARIA INIZIO", "TEMP. ARIA FINE"]:
-                            cell_value = str(row.get(col, "")).strip()
-                            if cell_value:
-                                try:
-                                    cell_float = float(cell_value.replace(',', '.'))
-                                    if abs(cell_float - temp_value) < 0.1:  # Tolleranza per decimali
-                                        temp_found = True
-                                        break
-                                except ValueError:
-                                    continue
-                        if temp_found:
-                            break
-                    if not temp_found:
-                        include_group = False
-                except ValueError:
-                    include_group = False
+            total_records = len(df)
+            filtered_records = len(filtered_df)
+            self.status_label.setText(
+                f"🔹 Record trovati: {filtered_records} | "
+                f"🔸 Record totali: {total_records} | "
+                f"📌 Developed By: @mattygoi"
+            )
             
-            # Filtro temperatura neve (stessa logica di temperatura aria)
-            if include_group and self.temp_neve.text():
-                tempn_text = self.temp_neve.text().strip().replace(',', '.')
-                try:
-                    tempn_value = float(tempn_text)
-                    tempn_found = False
-                    for _, row in group.iterrows():
-                        for col in ["TEMP. NEVE INIZIO", "TEMP. NEVE FINE"]:
-                            cell_value = str(row.get(col, "")).strip()
-                            if cell_value:
-                                try:
-                                    cell_float = float(cell_value.replace(',', '.'))
-                                    if abs(cell_float - tempn_value) < 0.1:
-                                        tempn_found = True
-                                        break
-                                except ValueError:
-                                    continue
-                        if tempn_found:
-                            break
-                    if not tempn_found:
-                        include_group = False
-                except ValueError:
-                    include_group = False
-            
-            # Filtro tipo neve
-            if include_group and self.tipo_neve.text():
-                tipon_text = self.tipo_neve.text().strip().lower()
-                if not any(tipon_text in str(row.get("TIPO NEVE", "")).lower() for _, row in group.iterrows()):
-                    include_group = False
-            
-            # Filtro umidità (gestisce valori percentuali e decimali)
-            if include_group and self.umidita.text():
-                umid_text = self.umidita.text().strip().replace(',', '.')
-                try:
-                    umid_value = float(umid_text)
-                    umid_found = False
-                    for _, row in group.iterrows():
-                        for col in ["UMIDITA % INIZIO", "UMIDITA' % FINE"]:
-                            cell_value = str(row.get(col, "")).strip().replace('%', '')
-                            if cell_value:
-                                try:
-                                    cell_float = float(cell_value.replace(',', '.'))
-                                    if abs(cell_float - umid_value) < 0.1:
-                                        umid_found = True
-                                        break
-                                except ValueError:
-                                    continue
-                        if umid_found:
-                            break
-                    if not umid_found:
-                        include_group = False
-                except ValueError:
-                    include_group = False
-            
-            # Filtro scelte (ricerca più flessibile)
-            if include_group and self.scelte_filter.currentText() != "Tutte":
-                scelta_text = self.scelte_filter.currentText().upper()
-                scelta_found = False
-                for _, row in group.iterrows():
-                    considerazioni = str(row.get("CONSIDERAZIONE POST GARA o TEST", "")).upper()
-                    # Cerca varie forme di "prima scelta", "seconda scelta", ecc.
-                    if scelta_text == "PRIMA SCELTA" and (
-                        "PRIMA SCELTA" in considerazioni or 
-                        "PRIMO" in considerazioni or 
-                        "MIGLIORE" in considerazioni or 
-                        "1°" in considerazioni
-                    ):
-                        scelta_found = True
-                        break
-                    elif scelta_text == "SECONDA SCELTA" and (
-                        "SECONDA SCELTA" in considerazioni or 
-                        "SECONDO" in considerazioni or 
-                        "2°" in considerazioni
-                    ):
-                        scelta_found = True
-                        break
-                    elif scelta_text == "TERZA SCELTA" and (
-                        "TERZA SCELTA" in considerazioni or 
-                        "TERZO" in considerazioni or 
-                        "3°" in considerazioni
-                    ):
-                        scelta_found = True
-                        break
-                if not scelta_found:
-                    include_group = False
-            
-            if include_group:
-                filtered_groups.append(group)
-        
-        filtered_df = pd.concat(filtered_groups) if filtered_groups else pd.DataFrame(columns=df.columns)
-        
-        # Popola la tabella
-        self.table.setRowCount(len(filtered_df))
-        self.table.setColumnCount(len(filtered_df.columns))
-        self.table.setHorizontalHeaderLabels(filtered_df.columns)
-        
-        for row in range(len(filtered_df)):
-            for col in range(len(filtered_df.columns)):
-                val = filtered_df.iat[row, col]
-                item = QTableWidgetItem(str(val))
-                
-                # Evidenziazione basata sulle scelte (logica più robusta)
-                considerazioni = str(filtered_df.at[row, "CONSIDERAZIONE POST GARA o TEST"]).upper()
-                if "PRIMA SCELTA" in considerazioni or "PRIMO" in considerazioni or "MIGLIORE" in considerazioni or "1°" in considerazioni:
-                    item.setBackground(QColor(200, 255, 200))  # Verde chiaro
-                elif "SECONDA SCELTA" in considerazioni or "SECONDO" in considerazioni or "2°" in considerazioni:
-                    item.setBackground(QColor(255, 255, 150))  # Giallo chiaro
-                elif "TERZA SCELTA" in considerazioni or "TERZO" in considerazioni or "3°" in considerazioni:
-                    item.setBackground(QColor(255, 200, 150))  # Arancione chiaro
-                
-                self.table.setItem(row, col, item)
-        
-        self.table.resizeColumnsToContents()
-        
-        total_records = len(df)
-        filtered_records = len(filtered_df)
-        self.status_label.setText(
-            f"🔹 Record trovati: {filtered_records} | "
-            f"🔸 Record totali: {total_records} | "
-            f"📌 Developed By: @mattygoi"
-        )
-        
-    except Exception as e:
-        QMessageBox.critical(self, "Errore", 
-            f"Errore durante il caricamento:\n{str(e)}\n\n"
-            f"Assicurarsi che il file Excel sia chiuso e riprovare.")
-        print(f"Errore durante il caricamento dei dati: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Errore", 
+                f"Errore durante il caricamento:\n{str(e)}\n\n"
+                f"Assicurarsi che il file Excel sia chiuso e riprovare.")
+            print(f"Errore durante il caricamento dei dati: {str(e)}")
 
 # ... (il resto del codice rimane invariato)
 if __name__ == "__main__":
